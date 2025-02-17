@@ -1,0 +1,79 @@
+README
+Descriere generală
+Acest program implementează un sistem distribuit de partajare a fișierelor folosind MPI (Message Passing Interface) pentru comunicație între procese și Pthreads pentru execuție paralelă pe fiecare proces. Programul este compus dintr-un tracker și mai mulți clienți, fiecare având roluri și funcționalități specifice. Trackerul administrează informațiile globale despre fișiere și coordonează descărcările între clienți, în timp ce clienții descarcă și furnizează fișiere.
+
+Funcționalitatea principală
+Tracker
+Trackerul rulează pe procesul MPI cu rank = 0 și are următoarele responsabilități:
+
+Gestionarea swarmului pentru fiecare fișier:
+Trackerul menține o listă de swarm-uri (SwarmEntry) pentru fiecare fișier, fiecare swarm conținând clienții care dețin segmente ale fișierului.
+Echilibrarea cererilor către clienți:
+Trackerul păstrează un contor al numărului de cereri primite pentru fiecare client folosind structura PeerRequestInfo.
+Lista de peers pentru un fișier este ordonată crescător în funcție de acest contor, astfel încât să evite aglomerarea unui singur client.
+Monitorizarea finalizării descărcărilor:
+Când un client finalizează descărcarea fișierelor dorite, trimite un mesaj "STOP" către tracker. Trackerul înregistrează acest eveniment și, după ce toți clienții au terminat descărcările, trimite un semnal de oprire (chunk cu indexul 200) către toate firele de upload.
+Clienți
+Fiecare client rulează pe un proces MPI cu rank > 0 și se compune din două fire de execuție:
+
+Threadul de descărcare (download_thread_func):
+
+Solicită trackerului lista de peers pentru fișierele dorite.
+Parcurge lista de peers, solicitând segmentele fișierului (chunks) unul câte unul.
+Actualizează lista de peers după fiecare 10 cereri pentru a reflecta distribuția actuală a încărcării.
+Salvează segmentele primite într-un fișier local și actualizează informațiile despre fișier într-un mod sincronizat folosind mutexuri.
+După finalizarea descărcării tuturor fișierelor dorite, trimite un mesaj "STOP" către tracker.
+Threadul de upload (upload_thread_func):
+
+Așteaptă cereri de segmente din partea altor clienți.
+Caută segmentul solicitat în lista de fișiere deținute de client și îl trimite solicitantului.
+Trimite un mesaj "ACK" pentru a confirma transmiterea segmentului.
+Verifică constant dacă trackerul trimite un semnal de oprire (chunk cu indexul 200) și își încheie execuția în acest caz.
+Structura principală a codului
+1. Structuri de date
+SwarmEntry: Reprezintă un fișier și lista de clienți care dețin segmente ale acestuia.
+
+filename: Numele fișierului.
+num_peers: Numărul de clienți care dețin fișierul.
+peers: Lista de ranks MPI ale clienților.
+PeerRequestInfo: Reține numărul de solicitări primite de un client.
+
+rank: Rank-ul MPI al clientului.
+request_count: Numărul de solicitări primite.
+FileInfo: Reprezintă un fișier, numărul de segmente și hash-urile fiecărui segment.
+
+PeerInfo: Informații despre fișierele deținute și dorite de un client, sincronizate printr-un mutex.
+
+2. Funcții
+Tracker
+find_or_add_file: Găsește un fișier în lista de swarm-uri sau adaugă unul nou.
+find_or_add_peer: Găsește sau adaugă un client în lista globală de peers.
+sort_peers: Sortează lista de peers pentru un fișier în funcție de numărul de cereri primite.
+tracker: Funcția principală care gestionează swarm-ul, distribuie liste de peers și monitorizează descărcările.
+Client
+read_input_file: Citește fișierele deținute și dorite de client dintr-un fișier de intrare.
+download_thread_func: Gestionarea descărcării fișierelor de la alți clienți.
+upload_thread_func: Gestionarea cererilor de upload din partea altor clienți.
+3. Sincronizare și concurență
+Mutexuri:
+
+Mutexurile sunt utilizate pentru a sincroniza accesul la structura PeerInfo, prevenind condițiile de cursă între threadurile de upload și download.
+Asigură integritatea datelor când un thread actualizează informațiile despre fișierele deținute.
+Mesajul de oprire:
+
+Fiecare client trimite un mesaj "STOP" către tracker după finalizarea descărcărilor. Trackerul trimite apoi un semnal de oprire către toate firele de upload.
+Fluxul de execuție
+Inițializare:
+
+Trackerul primește informațiile inițiale despre fișierele deținute de clienți.
+Fiecare client creează două threaduri: unul pentru descărcare și unul pentru upload.
+Descărcare fișiere:
+
+Clienții cer trackerului lista de peers pentru fiecare fișier dorit.
+Threadul de descărcare solicită segmente de la clienții din lista primită.
+Upload segmente:
+
+Threadul de upload răspunde cererilor de segmente de la alți clienți și confirmă transmiterea printr-un mesaj "ACK".
+Finalizare:
+
+După ce toți clienții au terminat descărcările, trackerul oprește toate firele de upload prin trimiterea semnalului de oprire.
